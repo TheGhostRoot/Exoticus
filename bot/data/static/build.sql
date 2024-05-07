@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS sector.system (
     PENALTY_CHANNEL_ID bigint,
     COMMAND_CHANNEL_ID bigint,
 
+    ERROR_CHANNEL_ID bigint,
     LOG_KEYWORD_CHANNEL_ID bigint,
     LOG_CHANNEL_ID bigint,
     WELCOME_CHANNEL_ID bigint,
