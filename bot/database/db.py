@@ -138,3 +138,10 @@ from pypika import Query, Table
         query = Query.update(sector.system).set(sector.system.log_channel_id, '12321313').where(sector.system.guild_id == guild_id)
         await bot_obj.db.execute(query.get_sql())  
 """
+# Example of how to get a record from the database
+"""
+    if bot_obj:
+        sector = Schema(bot_obj.db.schema)
+        query = Query.from_(sector.system).select(sector.system.log_channel_id).where(sector.system.guild_id == guild_id)
+        test = await bot_obj.db.field(query.get_sql())
+"""
