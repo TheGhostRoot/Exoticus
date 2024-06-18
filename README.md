@@ -28,6 +28,7 @@
    ```
 
 2. Install dependencies:
+  *Make sure to have atleast Python 12.3.4 installed!*
 
    ```bash
    pip install -r requirements.txt
@@ -77,7 +78,4 @@ If you would like to contribute to the development of the bot, follow these step
 
 - Leaderboard
 
-  
   ![](https://i.imgur.com/cb7IMHk.png)
-
-

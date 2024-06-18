@@ -1,11 +1,10 @@
 from asyncpg import UniqueViolationError
 import hikari
 import lightbulb
-from pypika import Query, Table, Schema
+from pypika import Query, Schema
 
 from ..data.static.functions import *
 import random
-from hikari import errors
 
 plugin = lightbulb.Plugin("moderation")
 
@@ -21,43 +20,7 @@ def unload(bot):
     global bot_obj
     bot_obj = bot
 
-
-@plugin.command()
-@lightbulb.command("ping", "ping pong!")
-@lightbulb.implements(lightbulb.SlashCommand)
-async def ping(event: lightbulb.Context) -> None:
-    guild_id = event.guild_id
-    await event.respond("That")
-
-
-############################################################################################################
-async def mod_penalty_send(event, user, sanktion, dauer, regelbruch, proof, zusätzliches, moderator, id, penalty_row):
-    try:
-        embed = hikari.Embed(
-            title="Neue Mod Penalty",
-            description=f"**User:** {user.mention}\n\n**ID:** {id}\n\n**Sanktion:** {sanktion} {dauer}\n\n**Regelbruch:** {
-                regelbruch}\n\n**Beweismittel:** {proof}\n\n**Zusätzliche Informationen:** {zusätzliches}\n\n**Moderator** {moderator.mention}",
-            color=0xE74C3C,
-        )
-        embed.set_footer(
-            text=(f"Uhrzeit: {datetime.now().strftime('%H:%M')}"))
-
-        # type: ignore
-        channel = await fetch_channel_from_id(plugin.bot.config.PENALTY_CHANNEL_ID)
-        await channel_send_embed(channel, embed, penalty_row)
-        # type: ignore
-        await event.respond(f"Mod Penalty erstellt in <#{plugin.bot.config.PENALTY_CHANNEL_ID}>!")
-    except Exception as e:
-        await error_message("Fehler MP-01", e)
-        content = f"Fehler **MP-01**"
-        await interaction_response(event, content, component=None)
-
-############################################################################################################
-############################################################################################################
-############################################################################################################
 # Mod Warn Command
-
-
 @plugin.command()
 @lightbulb.option("remarks", "Additional things you want to mention", required=False)
 @lightbulb.option("proof", "Proof of violation", hikari.Attachment, required=True)
@@ -149,8 +112,9 @@ async def mod_ban(event: lightbulb.Context) -> None:
                     Query.into(sector.moderation)
                     .columns(
                         sector.moderation.case_id,
-                        sector.moderation.admin_id,
-                        sector.moderation.moderator_id,
+                        sector.moderation.admin_approved,
+                        sector.moderation.admin_revoked,
+                        sector.moderation.admin_issuer,
                         sector.moderation.user_id,
                         sector.moderation.violation,
                         sector.moderation.sanction,
@@ -160,7 +124,7 @@ async def mod_ban(event: lightbulb.Context) -> None:
                         sector.moderation.timestamp,
                         sector.moderation.status
                     )
-                    .insert(case_id, 0, moderator.id, user.id, violation, sanction, duration, proof.url, remarks, datetime.now().strftime('%Y-%m-%d %H:%M'), 'Pending')
+                    .insert(case_id, 0, 0, moderator.id, user.id, violation, sanction, duration, proof.url, remarks, datetime.now().strftime('%Y-%m-%d %H:%M'), 'Pending')
                 )
                 await bot_obj.db.execute(query.get_sql())
                 break
@@ -169,12 +133,13 @@ async def mod_ban(event: lightbulb.Context) -> None:
     else:
         await event.respond("Failed to generate a unique case ID after 3 attempts.")
         return
+        
 
     if moderator is not None:
         embed = hikari.Embed(
             title="New Mod Penalty",
-            description=f"""**User:** {user.mention} | {user.username} | {id}\n\n**Sanction:** {sanction} {duration}\n\n**Violation:** {
-                violation}\n\n**Proof:** {proof.url}\n\n**Case ID:** `{case_id}`\n\n**Remarks:** {remarks}\n\n**Moderator** {moderator.mention}""",
+            description=f"""<:icon_user:1252618658031861861> **User:** {user.mention} | {user.username} | {id}\n\n<:icon_ban:1157787079149895731> **Sanction:** {sanction} {duration}\n\n<:icon_verified:1252619859703890013> **Violation:** {
+                violation}\n\n<:icon_file:1252618923052892220> **Proof:** {proof.url}\n\n<:icon_channel:1157786923486683176> **Case ID:** `{case_id}`\n\n<:icon_info:1252620053396848711> **Remarks:** {remarks}\n\n<:icon_staff:1157786955996729376> **Issued by** {moderator.mention} | *{datetime.now().strftime('%Y-%m-%d %H:%M')}*""",
             color=0xE74C3C,
         )
         button = plugin.bot.rest.build_message_action_row()
@@ -203,15 +168,18 @@ async def on_interaction_create_test(event: hikari.InteractionCreateEvent):
 
         # Check if the custom ID starts with "CID-"
         if custom_id.startswith("CID-"):
-            # Fetch information from the database
+            if custom_id.endswith("-UNBAN"):
+                custom_id = custom_id[:-6]
+                # Fetch information from the database
             if bot_obj:
                 sector = Schema(bot_obj.db.schema)
                 query = (
                     Query.from_(sector.moderation)
                     .select(
                         sector.moderation.case_id,
-                        sector.moderation.admin_id,
-                        sector.moderation.moderator_id,
+                        sector.moderation.admin_approved,
+                        sector.moderation.admin_revoked,
+                        sector.moderation.admin_issuer,
                         sector.moderation.user_id,
                         sector.moderation.violation,
                         sector.moderation.sanction,
@@ -225,14 +193,14 @@ async def on_interaction_create_test(event: hikari.InteractionCreateEvent):
                 )
                 query_str = str(query)
                 case = await bot_obj.db.records(query_str)
-                if case:
-                    case_id, admin_id, moderator_id, user_id, violation, sanction, duration, proof, remarks, timestamp, status = case[
+                if case:     
+                    case_id, admin_approved, admin_revoked, admin_issuer, user_id, violation, sanction, duration, proof, remarks, timestamp, status = case[
                         0]
 
                     # Fetch admin roles
                     admin = event.interaction.member
                     if guild_id and admin:
-                        admin_id = admin.id
+                        admin_approved = admin.id
                         admin_permissions = admin.permissions
                         user = await plugin.bot.rest.fetch_user(user_id)
                         if user and status == "Pending":
@@ -246,7 +214,7 @@ async def on_interaction_create_test(event: hikari.InteractionCreateEvent):
                                 await event.interaction.create_initial_response(content=f"**<:icon_loading:1245685294079152180> Executing {sanction} on {user.mention}.** | Case ID: `{case_id}`", flags=64, response_type=hikari.ResponseType.MESSAGE_CREATE)
                                 content = await event.interaction.fetch_initial_response()
                                 
-                                if admin_permissions.BAN_MEMBERS and admin_id != moderator_id:
+                                if admin_permissions.BAN_MEMBERS: #and admin_approved != admin_issuer
                                     await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Permissions Checked")
                                     content = await event.interaction.fetch_initial_response()
                                     await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Sending Penalty message to {user.mention}")
@@ -255,7 +223,7 @@ async def on_interaction_create_test(event: hikari.InteractionCreateEvent):
                                     try:
                                         embed = await create_embed(
                                             "You have been Banned",
-                                            f"""**User** \n {user.mention} | {user} | {user_id} \n \n **Moderator**\n <@{moderator_id}> | Approved by {event.interaction.user.mention} \n \n **Reason** \n You have been permanently banned for **{
+                                            f"""**User** \n {user.mention} | {user} | {user_id} \n \n **Issued by**\n <@{admin_issuer}> | Approved by {event.interaction.user.mention} \n \n **Reason** \n You have been permanently banned for **{
                                                 violation}**, if this is incorrect, please contact the unbanning server or {event.interaction.user.mention} \n \n **Unbanning Server** \n https://discord.gg/dcu9q27tJg""",
                                             "#FF6669",
                                         )
@@ -284,16 +252,45 @@ async def on_interaction_create_test(event: hikari.InteractionCreateEvent):
                                         # Update Admin in Database
                                         query = (
                                             Query.update(sector.moderation)
-                                            .set(sector.moderation.admin_id, admin_id)
+                                            .set(sector.moderation.admin_approved, admin_approved)
                                             .set(sector.moderation.status, "Approved")
                                             .where(sector.moderation.case_id == case_id)
                                         )
-                                        # await bot_obj.db.execute(query.get_sql())
+                                        await bot_obj.db.execute(query.get_sql())
                                         await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> DB Entry `Approved` Executed")
                                     except Exception as e:
                                         await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Executing DB Entry `Approved`")
                                         return
-                                elif admin_id == moderator_id:
+                                    try:
+                                        await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Editing Embed")
+                                        edited_button = []
+                                        unban_button = plugin.bot.rest.build_message_action_row()
+                                        unban_button.add_interactive_button(
+                                            components.ButtonStyle.SUCCESS,
+                                            case_id+"-UNBAN",
+                                            label=f"Unban",
+                                        )
+                                        edited_button.append(unban_button)
+                                        await event.interaction.message.edit(components=edited_button)
+                                        # edit old Embed (add Revoked Moderator to embed)
+                                        if len(event.interaction.message.embeds) > 0:
+                                            embed = event.interaction.message.embeds[0]
+                                            if embed.description is not None:
+                                                embed.description += f"\n<:icon_invite:1157786940255518811> **Approved by:** {admin.mention} | *{datetime.now().strftime('%Y-%m-%d %H:%M')}*"
+                                            else:
+                                                embed.description = f"\n<:icon_invite:1157786940255518811> **Approved by:** {admin.mention} | *{datetime.now().strftime('%Y-%m-%d %H:%M')}*"
+                                            await event.interaction.message.edit(embed=embed)
+
+                                        await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Embed Edited")
+                                    except Exception as e:
+                                        await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Editing Embed")
+                                        return
+
+
+
+
+
+                                elif admin_approved == admin_issuer:
                                     # Timeout user until the sanction is approved
                                     await plugin.bot.rest.edit_member(guild_id, user, communication_disabled_until=datetime.utcnow() + timedelta(seconds=259200), reason=f"Timeout until sanction is approved (3 Days) | case ID: {case_id}")
                                     await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> You cannot approve your own sanction.\n- <:icon_exclamation:1245726822516396115> {user.mention} has been timed out for 3 days until the sanction is approved.")
@@ -329,7 +326,7 @@ async def on_interaction_create_test(event: hikari.InteractionCreateEvent):
 
                                             embed = await create_embed(
                                             "You have been Timed Out",
-                                            f"""**User** \n {user.mention} | {user} | {user_id} \n \n **Moderator**\n <@{moderator_id}> | Approved by {event.interaction.user.mention} \n \n **Reason** \n You have been timed out for **{
+                                            f"""**User** \n {user.mention} | {user} | {user_id} \n \n **Issued by**\n <@{admin_issuer}> | Approved by {event.interaction.user.mention} \n \n **Reason** \n You have been timed out for **{
                                                 violation}**, if this is incorrect, please contact the unbanning server or {event.interaction.user.mention} \n \n **Unbanning Server** \n https://discord.gg/dcu9q27tJg \n \n **Duration** \n {duration}""",
                                             "#FF6669",
                                             )
@@ -348,6 +345,45 @@ async def on_interaction_create_test(event: hikari.InteractionCreateEvent):
                                                 await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Sending Penalty message to {user.mention}")
                                                 content = await event.interaction.fetch_initial_response()
                                                 return
+                                            content = await event.interaction.fetch_initial_response()
+                                        await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Executing DB Entry `Approved`")
+                                        
+                                        try:
+                                            # Update Admin in Database
+                                            query = (
+                                                Query.update(sector.moderation)
+                                                .set(sector.moderation.admin_approved, admin_approved)
+                                                .set(sector.moderation.status, "Approved")
+                                                .where(sector.moderation.case_id == case_id)
+                                            )
+                                            await bot_obj.db.execute(query.get_sql())
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> DB Entry `Approved` Executed")
+                                        except Exception as e:
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Executing DB Entry `Approved`")
+                                            return
+                                        try:
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Editing Embed")
+                                            edited_button = []
+                                            unban_button = plugin.bot.rest.build_message_action_row()
+                                            unban_button.add_interactive_button(
+                                                components.ButtonStyle.SUCCESS,
+                                                case_id+"-UNBAN",
+                                                label=f"Remove Timeout",
+                                            )
+                                            edited_button.append(unban_button)
+                                            await event.interaction.message.edit(components=edited_button)
+                                            # edit old Embed (add Revoked Moderator to embed)
+                                            if len(event.interaction.message.embeds) > 0:
+                                                embed = event.interaction.message.embeds[0]
+                                                if embed.description is not None:
+                                                    embed.description += f"\n<:icon_invite:1157786940255518811> **Approved by:** {admin.mention} | *{datetime.now().strftime('%Y-%m-%d %H:%M')}*"
+                                                else:
+                                                    embed.description = f"\n<:icon_invite:1157786940255518811> **Approved by:** {admin.mention} | *{datetime.now().strftime('%Y-%m-%d %H:%M')}*"
+                                                await event.interaction.message.edit(embed=embed)
+                                                await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Embed Edited")
+                                        except Exception as e:
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Editing Embed")
+                                            return
                                     else:
                                         # Invalid duration
                                         await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Invalid Timeout Duration")
@@ -381,213 +417,110 @@ async def on_interaction_create_test(event: hikari.InteractionCreateEvent):
                                 else:
                                     await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> You do not have permission to perform this action.")
                                     return
+                        elif user and status == "Approved":
+                            if sanction == "Ban":
+                                await event.interaction.create_initial_response(content=f"**<:icon_loading:1245685294079152180> Revoking Ban on {user.mention}.** | Case ID: `{case_id}`", flags=64, response_type=hikari.ResponseType.MESSAGE_CREATE)
+                                content = await event.interaction.fetch_initial_response()
+                                if int(admin_revoked) == 0:
+                                    await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Checking Permissions")
+                                    admin_approved = admin.id
+                                    admin_permissions = admin.permissions
+                                    if admin_permissions.BAN_MEMBERS or admin_approved == admin_issuer:
+                                        await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Permissions Checked")
+                                        content = await event.interaction.fetch_initial_response()
+                                        try:
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Unbanning {user.mention}")
+                                            await plugin.bot.rest.unban_user(guild_id, user_id)
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Unbanned {user.mention}")
+                                            content = await event.interaction.fetch_initial_response()
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Executing DB Entry `Revoked`")
+                                            try:
+                                                # Update Revoke Admin in DB and Change Status to Revoked
+                                                query = (
+                                                    Query.update(sector.moderation)
+                                                    .set(sector.moderation.admin_revoked, admin_revoked)
+                                                    .set(sector.moderation.status, "Revoked")
+                                                    .where(sector.moderation.case_id == case_id)
+                                                )
+                                                await bot_obj.db.execute(query.get_sql())
+                                                await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> DB Entry `Revoked` Executed")
+                                                content = await event.interaction.fetch_initial_response()
+                                                try:
+                                                    await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Editing Embed")
+                                                    edited_button = []
+                                                    await event.interaction.message.edit(components=edited_button)
+                                                    # edit old Embed (add Revoked Moderator to embed)
+                                                    if len(event.interaction.message.embeds) > 0:
+                                                        embed = event.interaction.message.embeds[0]
+                                                        if embed.description is not None:
+                                                            embed.description += f"\n<:icon_verified:1157786964364365864> **Revoked by:** {admin.mention}"
+                                                        else:
+                                                            embed.description = f"\n<:icon_verified:1157786964364365864> **Revoked by:** {admin.mention}"
+                                                        await event.interaction.message.edit(embed=embed)
+
+                                                    await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Embed Edited")
+                                                except Exception as e:
+                                                    await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Editing Embed")
+                                                    return
+                                            except Exception as e:
+                                                await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Executing DB Entry `Revoked`")
+                                                return
 
 
-@plugin.listener(hikari.InteractionCreateEvent)
-async def on_interaction_create(event: hikari.InteractionCreateEvent):
-    if isinstance(event.interaction, hikari.ComponentInteraction):
-        custom_id = event.interaction.custom_id
-        guild_id = event.interaction.guild_id
+                                        except Exception as e:
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Unbanning {user.mention}")
+                                            return
+                            elif sanction == "Timeout":
+                                await event.interaction.create_initial_response(content=f"**<:icon_loading:1245685294079152180> Removing Timout on {user.mention}.** | Case ID: `{case_id}`", flags=64, response_type=hikari.ResponseType.MESSAGE_CREATE)
+                                content = await event.interaction.fetch_initial_response()
+                                if int(admin_revoked) == 0:
+                                    await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Checking Permissions")
+                                    admin_approved = admin.id
+                                    admin_permissions = admin.permissions
+                                    if admin_permissions.BAN_MEMBERS or admin_approved == admin_issuer:
+                                        await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Permissions Checked")
+                                        content = await event.interaction.fetch_initial_response()
+                                        try:
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Removing Timeout from {user.mention}")
+                                            await plugin.bot.rest.edit_member(guild_id, user, communication_disabled_until=None)
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Timout Removed from {user.mention}")
+                                            content = await event.interaction.fetch_initial_response()
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Executing DB Entry `Revoked`")
+                                            try:
+                                                # Update Revoke Admin in DB and Change Status to Revoked
+                                                query = (
+                                                    Query.update(sector.moderation)
+                                                    .set(sector.moderation.admin_revoked, admin_revoked)
+                                                    .set(sector.moderation.status, "Revoked")
+                                                    .where(sector.moderation.case_id == case_id)
+                                                )
+                                                await bot_obj.db.execute(query.get_sql())
+                                                await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> DB Entry `Revoked` Executed")
+                                                content = await event.interaction.fetch_initial_response()
+                                                try:
+                                                    await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_loading:1245685294079152180> Editing Embed")
+                                                    edited_button = []
+                                                    await event.interaction.message.edit(components=edited_button)
+                                                    # edit old Embed (add Revoked Moderator to embed)
+                                                    if len(event.interaction.message.embeds) > 0:
+                                                        embed = event.interaction.message.embeds[0]
+                                                        if embed.description is not None:
+                                                            embed.description += f"\n<:icon_verified:1157786964364365864> **Removed by:** {admin.mention} | *{datetime.now().strftime('%Y-%m-%d %H:%M')}*"
+                                                        else:
+                                                            embed.description = f"\n<:icon_verified:1157786964364365864> **Removed by:** {admin.mention} | *{datetime.now().strftime('%Y-%m-%d %H:%M')}*"
+                                                        await event.interaction.message.edit(embed=embed)
 
-        if custom_id in ["permban", "timeout", "warn"]:
+                                                    await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_correct:1157786925680308386> Embed Edited")
+                                                except Exception as e:
+                                                    await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Editing Embed")
+                                                    return
+                                            except Exception as e:
+                                                await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Executing DB Entry `Revoked`")
+                                                return
 
-            if custom_id == "permban":
-                values = get_embed_values(event)
 
-                if values:
-                    regelbruch = values[0]
-                    moderator = values[2]
-                    id = values[3]
-                    user = await fetch_user_from_id(int(id))
+                                        except Exception as e:
+                                            await event.interaction.edit_initial_response(content=f"{content.content}\n- <:icon_wrong:1157786966381822003> Error Unbanning {user.mention}")
+                                            return
+                                    
 
-                    if user:
-                        embed = await create_embed("Du wurdest Permanent Gebannt", f"**User** \n {user.mention} | {user} | {id} \n \n **Teammitglied**\n {moderator} | Angenommen von {event.interaction.user.mention} \n \n **Grund** \n Du wurdest wegen **{regelbruch}** Permanent Gebannt, sollte dies falsch sein, melde dich bitte auf dem Entbannungsserver oder bei {event.interaction.user.mention} \n \n **Entbannungsserver** \n Comming Soon.", "#FF6669")
-
-                        try:
-                            if embed is not None:
-                                await user.send(embed=embed)
-                            else:
-                                await user.send(content="No embed provided.")
-                            embed = await create_embed("Permanent Gebannt", f"> **User:** {user.mention} | {user.username}\n> **ID:** {user.id}\n> **Regelbruch:** {regelbruch}\n> **Dauer:** Permanent\n> **Teammitglied:** {moderator}", "#E74D3C")
-                            # type: ignore
-                            channel = await fetch_channel_from_id(plugin.bot.config.MODERATION_LOG_CHANNEL_ID)
-                            await channel_send_embed(channel, embed, component=None)
-                        except Exception as e:
-                            embed = await create_embed("Permanent Gebannt", f"> **User:** {user.mention} | {user.username}\n> **ID:** {user.id}\n> **Regelbruch:** {regelbruch}\n> **Dauer:** Permanent\n> **Teammitglied:** {moderator}", "#E74D3C")
-                            # type: ignore
-                            channel = await fetch_channel_from_id(plugin.bot.config.MODERATION_LOG_CHANNEL_ID)
-                            await channel_send_embed(channel, embed, component=None)
-                            await error_message("Fehler MP-04", e)
-                            content = f"Fehler **MP-04**"
-                            await interaction_response(event, content, component=None)
-
-                        try:
-                            await user_permanent_ban(guild_id, int(id), regelbruch)
-                        except Exception as e:
-                            await error_message("Fehler **MP-02**", e)
-                            content = f"Fehler **MP-02**"
-                            await interaction_response(event, content, component=None)
-
-                        edited_button = []
-                        ban_button = plugin.bot.rest.build_message_action_row()
-                        ban_button.add_interactive_button(
-                            components.ButtonStyle.DANGER,
-                            "ban",
-                            label=f"gebannt von {
-                                event.interaction.user.username}",
-                            is_disabled=True,
-                        )
-                        unban_button = plugin.bot.rest.build_message_action_row()
-                        unban_button.add_interactive_button(
-                            components.ButtonStyle.SUCCESS,
-                            "unban",
-                            label=f"Entbannen",
-                        )
-                        edited_button.append(ban_button)
-                        edited_button.append(unban_button)
-                        await event.interaction.message.edit(components=edited_button)
-
-            elif custom_id == "timeout":
-                values = get_embed_values(event)
-
-                if values:
-                    regelbruch = values[0]
-                    dauer = values[1]
-                    moderator = values[2]
-                    id = values[3]
-
-                    if guild_id and dauer:
-                        try:
-                            user = await plugin.bot.rest.fetch_member(guild_id, id)
-                        except Exception as e:
-                            await error_message("Fehler **F-01**", e)
-                            content = f"Fehler **F-01**"
-                            await interaction_response(event, content, component=None)
-                            return
-
-                        duration_mapping = {
-                            "1 Tag": 1 * 24 * 60 * 60,
-                            "3 Tage": 3 * 24 * 60 * 60,
-                            "1 Woche": 7 * 24 * 60 * 60,
-                            "2 Wochen": 14 * 24 * 60 * 60,
-                            "1 Monat": 30 * 24 * 60 * 60,
-                            "3 Monate": 3 * 30 * 24 * 60 * 60,
-                        }
-                        duration = duration_mapping.get(dauer)
-
-                        if duration and user:
-
-                            try:
-                                await user.edit(
-                                    communication_disabled_until=datetime.utcnow()
-                                    + timedelta(seconds=duration),
-                                    reason=regelbruch,
-                                )
-                                content = f"Fehler **MP-01**"
-                                await interaction_response(event, content, component=None)
-                            except Exception as e:
-                                await error_message("Fehler **MP-03**", e)
-                                content = f"Fehler **MP-03**"
-                                await interaction_response(event, content, component=None)
-
-                            embed = await create_embed("Du wurdest Timeouted", f"**User** \n {user.mention} | user | {id} \n \n **Teammitglied**\n {moderator} | Angenommen von {event.interaction.user.mention} \n \n **Grund** \nDu wurdest wegen **{regelbruch}** für {dauer} in den Timeout versetzt. Infolge hast du eine Verwarnung erhalten. Die verwarnung bleibt für 3 Monate bestehen. Solltest du insgesamt drei Verwarnungen erhalten, droht ein Permaneter ausschluss!\n\nWenn du der Meinung bist, dass hier ein Fehler vorliegt, kannst du jederzeit ein <#963132179813109790> öffnen.\n\nBitte achte in Zukunft darauf, einen respektvollen Umgangston zu wahren und eine positive Atmosphäre in unserer Community zu fördern.\n \n **Entbannungsserver** \n Comming Soon.", "#FF6669")
-
-                            try:
-                                await user_send_dm(user, embed, component=None)
-                                embed = await create_embed("Timeout", f"> **User:** {user.mention} | {user.username}\n> **ID:** {user.id}\n> **Regelbruch:** {regelbruch}\n> **Dauer:** Timeout {dauer}\n> **Teammitglied:** {moderator}", "#FF6669")
-                                # type: ignore
-                                channel = await fetch_channel_from_id(plugin.bot.config.MODERATION_LOG_CHANNEL_ID)
-                                await channel_send_embed(channel, embed, component=None)
-                            except Exception as e:
-                                embed = await create_embed("Timeout", f"> **User:** {user.mention} | {user.username}\n> **ID:** {user.id}\n> **Regelbruch:** {regelbruch}\n> **Dauer:** Timeout {dauer}\n> **Teammitglied:** {moderator}", "#FF6669")
-                                # type: ignore
-                                channel = await fetch_channel_from_id(plugin.bot.config.MODERATION_LOG_CHANNEL_ID)
-                                await channel_send_embed(channel, embed, component=None)
-                                await error_message("Fehler MP-04", e)
-                                content = f"Fehler **MP-04**"
-                                await interaction_response(event, content, component=None)
-
-                            edited_button = []
-                            timeout_button = plugin.bot.rest.build_message_action_row()
-                            timeout_button.add_interactive_button(
-                                components.ButtonStyle.PRIMARY,
-                                "timeout",
-                                label=f"Timedout von {
-                                    event.interaction.user.username}",
-                                is_disabled=True,
-                            )
-                            remove_timeout_button = plugin.bot.rest.build_message_action_row()
-                            remove_timeout_button.add_interactive_button(
-                                components.ButtonStyle.SUCCESS,
-                                "remove_timeout",
-                                label=f"Remove Timeout",
-                            )
-                            edited_button.append(timeout_button)
-                            edited_button.append(remove_timeout_button)
-                            await event.interaction.message.edit(components=edited_button)
-
-            elif custom_id == "warn":
-                values = get_embed_values(event)
-
-                if values:
-                    regelbruch = values[0]
-                    id = values[3]
-
-                    if guild_id:
-                        try:
-                            user = await plugin.bot.rest.fetch_member(guild_id, id)
-                        except Exception as e:
-                            await error_message("Fehler **F-01**", e)
-                            content = f"Fehler **F-01**"
-                            await interaction_response(event, content, component=None)
-
-                        embed = await create_embed("Du wurdest Verwarnt", f"Hey {user.mention}, \n\nWir müssen dir leider mitteilen, dass du eine Verwarnung erhalten hast. Grund dafür ist **{regelbruch}**. Diese Verwarnung bleibt für 3 Monate bestehen. \n Solltest du insgesamt drei Verwarnungen erhalten, droht ein Permanenter ausschluss!\n\nWenn du der Meinung bist, dass hier ein Fehler vorliegt, kannst du jederzeit ein <#963132179813109790> öffnen.\n\nBitte achte in Zukunft darauf, einen respektvollen Umgangston zu wahren und eine positive Atmosphäre in unserer Community zu fördern. \n\nBeste Grüße, \nDas Moderationsteam", "#FF6669")
-
-                        try:
-                            await user_send_dm(user, embed, component=None)
-                        except Exception as e:
-                            await error_message("Fehler **MP-04**", e)
-                            content = f"Fehler **MP-04**"
-                            await interaction_response(event, content, component=None)
-
-                        content = f"{user.mention} Erfolgreich Verwarnt"
-                        await interaction_response(event, content, component=None)
-
-                        edited_button = []
-                        warn_button = plugin.bot.rest.build_message_action_row()
-                        warn_button.add_interactive_button(
-                            components.ButtonStyle.SECONDARY,
-                            "warn",
-                            label=f"Verwarnt von {
-                                event.interaction.user.username}",
-                            is_disabled=True,
-                        )
-                        remove_warn_button = plugin.bot.rest.build_message_action_row()
-                        remove_warn_button.add_interactive_button(
-                            components.ButtonStyle.SUCCESS,
-                            "remove_warn",
-                            label=f"Remove Warn",
-                        )
-                        edited_button.append(warn_button)
-                        edited_button.append(remove_warn_button)
-                        await event.interaction.message.edit(components=edited_button)
-
-        elif custom_id in ["unban", "remove_timeout", "remove_warn"]:
-            values = get_embed_values(event)
-            if values:
-                id = values[3]
-                if custom_id == "unban":
-                    # if user is banned <- check if user is banned fia db
-                    # if interaction.user has permission <- check via db
-                    await user_unban(guild_id, id)
-                    # Edit Button
-                    return
-                elif custom_id == "remove_timeout":
-                    # if user is still in timeout
-                    # if interaction.user has permission <- check via db
-                    # remove timeout
-                    # Edit Button
-                    return
-                elif custom_id == "remove_warn":
-                    # set warn to false in db
-                    return
