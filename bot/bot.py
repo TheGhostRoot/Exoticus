@@ -11,6 +11,7 @@ from bot.database.db import Database
 from bot.database.cacheManager import *
 from bot.data.static.functions import *
 from pypika import Query, Table, Field
+from bot.extensions import moderation
 
 class Bot(lightbulb.BotApp):
 
@@ -24,6 +25,7 @@ class Bot(lightbulb.BotApp):
         self._transcripts = "./bot/data/transcripts"  # for ticket logs
         self.db = Database(self)
         self.cm = CacheManager(self)
+        self.moderation = moderation # for moderation commands
         
 
 

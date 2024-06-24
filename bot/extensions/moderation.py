@@ -59,7 +59,7 @@ async def mod_timeout(event: lightbulb.Context) -> None:
 @lightbulb.implements(lightbulb.SlashCommand, lightbulb.UserCommand)
 async def mod_ban(event: lightbulb.Context) -> None:
     remarks = event.options.remarks
-
+    
     # Check if remarks is None, if so, set it to "No Remarks"
     if remarks is None:
         remarks = "No Remarks"
@@ -155,7 +155,9 @@ async def mod_ban(event: lightbulb.Context) -> None:
         channel = await plugin.bot.rest.fetch_channel(channel_id)
         await channel.send(embed=embed, components=[button])  # type: ignore
         # type: ignore
-        await event.respond(f"Mod Penalty created in <#{channel_id}>!")
+        if event.respond:
+            await event.respond(f"Mod Penalty created in <#{channel_id}>!")
+        
 
 # Listener for interaction create event
 
